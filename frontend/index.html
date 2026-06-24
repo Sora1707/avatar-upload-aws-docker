@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Avatar App Control Panel</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                max-width: 600px;
+                margin: 40px auto;
+                padding: 20px;
+                background: #f9f9f9;
+                color: #333;
+            }
+            .card {
+                background: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                margin-bottom: 20px;
+            }
+            input,
+            button {
+                display: block;
+                width: 100%;
+                padding: 10px;
+                margin: 10px 0;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                box-sizing: border-box;
+            }
+            button {
+                background: #0070f3;
+                color: white;
+                border: none;
+                font-weight: bold;
+                cursor: pointer;
+            }
+            button:hover {
+                background: #0051a8;
+            }
+            .avatar-preview {
+                width: 150px;
+                height: 150px;
+                border-radius: 50%;
+                object-fit: cover;
+                border: 3px solid #0070f3;
+                display: block;
+                margin: 10px auto;
+                background: #eee;
+            }
+            .status {
+                padding: 10px;
+                background: #eee;
+                border-left: 4px solid #666;
+                font-family: monospace;
+                white-space: pre-wrap;
+                font-size: 12px;
+            }
+        </style>
+    </head>
+    <body>
+        <h2>⚡ Avatar System Dashboard</h2>
+
+        <div class="card" id="authCard">
+            <h3>🔐 Authentication</h3>
+            <input type="text" id="username" placeholder="Username" />
+            <input type="password" id="password" placeholder="Password" />
+            <button onclick="handleRegister()">Register</button>
+            <button onclick="handleLogin()" style="background: #222">Login</button>
+        </div>
+
+        <div class="card" id="profileCard" style="display: none">
+            <h3>👤 User Profile</h3>
+            <p>Logged in as: <strong id="profileUser">...</strong></p>
+            <img id="avatarImg" class="avatar-preview" src="" alt="No Profile Avatar Set" />
+
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0" />
+
+            <h3>📤 Change Profile Picture</h3>
+            <input type="file" id="avatarFile" accept="image/jpeg,image/png" />
+            <button onclick="uploadAvatarWorkflow()">Upload to S3</button>
+        </div>
+
+        <div class="card">
+            <h3>📟 System Output logs</h3>
+            <div id="statusLog" class="status">System idle... Ready for actions.</div>
+        </div>
+
+        <script>
+            let jwtToken = "";
+
+            function log(message) {
+                document.getElementById("statusLog").innerText =
+                    typeof message === "object" ? JSON.stringify(message, null, 2) : message;
+            }
+
+            async function handleRegister() {
+                const u = document.getElementById("username").value;
+                const p = document.getElementById("password").value;
+                try {
+                    const res = await fetch("/api/register", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ username: u, password: p }),
+                    });
+                    const data = await res.json();
+                    log(data);
+                } catch (err) {
+                    log("Registration error: " + err);
+                }
+            }
+
+            async function handleLogin() {
+                const u = document.getElementById("username").value;
+                const p = document.getElementById("password").value;
+                try {
+                    const res = await fetch("/api/login", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ username: u, password: p }),
+                    });
+                    const data = await res.json();
+                    if (data.access_token) {
+                        jwtToken = data.access_token;
+                        document.getElementById("authCard").style.display = "none";
+                        document.getElementById("profileCard").style.display = "block";
+                        fetchProfile();
+                    } else {
+                        log(data);
+                    }
+                } catch (err) {
+                    log("Login error: " + err);
+                }
+            }
+
+            async function fetchProfile() {
+                try {
+                    const res = await fetch("/api/me", {
+                        headers: { Authorization: `Bearer ${jwtToken}` },
+                    });
+                    const data = await res.json();
+                    document.getElementById("profileUser").innerText = data.username;
+                    if (data.avatar_url) {
+                        document.getElementById("avatarImg").src = data.avatar_url;
+                    }
+                    log("Profile synchronization active!");
+                } catch (err) {
+                    log("Profile fetch error: " + err);
+                }
+            }
+
+            // 🚀 THE COMPLETE PRESIGNED URL UPLOAD SEQUENCE
+            async function uploadAvatarWorkflow() {
+                const fileInput = document.getElementById("avatarFile");
+                if (fileInput.files.length === 0) return alert("Select a file first!");
+                const file = fileInput.files[0];
+
+                log("Step 1: Requesting presigned URL from Backend API...");
+
+                // 1. Get presigned upload configuration metadata
+                const urlRes = await fetch("/api/avatar/upload-url", {
+                    method: "GET",
+                    headers: { Authorization: `Bearer ${jwtToken}` },
+                });
+                const urlData = await urlRes.json();
+                log(urlData);
+
+                if (!urlData.upload_url) return;
+
+                log("Step 2: Uploading binary sequence directly to Amazon S3...");
+
+                // 2. Upload file directly to S3 bucket bypass route
+                const s3Res = await fetch(urlData.upload_url, {
+                    method: "PUT",
+                    headers: { "Content-Type": "image/png" },
+                    body: file,
+                });
+
+                if (s3Res.status !== 200) {
+                    log("S3 Upload Failed with status code: " + s3Res.status);
+                    return;
+                }
+
+                log(
+                    "Step 3: Upload complete! Sending bucket key confirmation back to Backend API...",
+                );
+
+                // 3. Inform backend that storage mapping was successfully deployed
+                const confirmRes = await fetch("/api/avatar/confirm", {
+                    method: "POST",
+                    headers: {
+                        Authorization: `Bearer ${jwtToken}`,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ object_key: urlData.object_key }),
+                });
+                const confirmData = await confirmRes.json();
+                log(confirmData);
+
+                // Refetch profile data to show our fresh new avatar link!
+                fetchProfile();
+            }
+        </script>
+    </body>
+</html>
