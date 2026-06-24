@@ -18,6 +18,21 @@ services:
       timeout: 5s
       retries: 5
 
+  api:
+    build: ./backend
+    container_name: avatar_fastapi_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - ${API_PORT:-8000}:8000
+    volumes:
+      - ./backend/app:/backend/app # dev mode
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload # dev mode - override CMD
+    depends_on:
+      database:
+        condition: service_healthy
+
 volumes:
   postgres_data:
     driver: local
